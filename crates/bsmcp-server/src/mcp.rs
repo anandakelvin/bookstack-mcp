@@ -831,6 +831,13 @@ async fn execute_tool(
             let fmt = ExportFormat::parse_str(&arg_str_default(args, "format", "markdown"))?;
             client.export_page(id, fmt).await
         }
+        // Fork: one section of a page, from BookStack's markdown export.
+        "export_section" => {
+            let id = arg_i64_required(args, "page_id")?;
+            let heading = arg_str(args, "heading")?;
+            let md = client.export_page(id, ExportFormat::Markdown).await?;
+            crate::fork_tools::export_section(&md, &heading, id)
+        }
         "export_chapter" => {
             let id = arg_i64_required(args, "chapter_id")?;
             let fmt = ExportFormat::parse_str(&arg_str_default(args, "format", "markdown"))?;
@@ -2375,6 +2382,14 @@ pub fn tool_definitions(semantic_enabled: bool) -> Vec<Value> {
             },
             "required": ["page_id"]
         })),
+        tool("export_section", "Return only the markdown under one heading of a page: from the heading to the next heading of the same or higher level. Cheaper than export_page when you need one part. Works on markdown and WYSIWYG pages.", json!({
+            "type": "object",
+            "properties": {
+                "page_id": { "type": "integer", "description": "The page_id" },
+                "heading": { "type": "string", "description": "The heading text (e.g. '## Current state' or just 'Current state'), case-insensitive" }
+            },
+            "required": ["page_id", "heading"]
+        })),
         tool("export_chapter", "Export a chapter as markdown, plaintext, or html. Returns all pages in the chapter.", json!({
             "type": "object",
             "properties": {
@@ -2760,22 +2775,24 @@ mod tests {
     }
 
     /// v0.10.0 surface lock + issue #69: 59 BookStack CRUD plus 1 directory
-    /// tool plus 3 semantic tools equals 63. Anything extra means a
-    /// briefing-era surface leaked back in.
+    /// tool plus 3 semantic tools equals 63, plus the fork's tools
+    /// (FORK_TOOLS). Anything else means a surface leaked in.
+    const FORK_TOOLS: usize = 1;
+
     #[test]
-    fn tools_list_count_is_63_with_semantic() {
+    fn tools_list_count_with_semantic() {
         let tools = tool_definitions(true);
         assert_eq!(
             tools.len(),
-            63,
-            "expected 59 CRUD + 1 directory + 3 semantic = 63 tools"
+            63 + FORK_TOOLS,
+            "expected 59 CRUD + 1 directory + 3 semantic + fork tools"
         );
     }
 
     #[test]
-    fn tools_list_count_is_60_without_semantic() {
+    fn tools_list_count_without_semantic() {
         let tools = tool_definitions(false);
-        assert_eq!(tools.len(), 60, "expected 59 CRUD + 1 directory = 60 tools");
+        assert_eq!(tools.len(), 60 + FORK_TOOLS, "expected 59 CRUD + 1 directory + fork tools");
     }
 
     /// Locks the precise tool name set so a briefing/session/dismiss-style
@@ -2824,6 +2841,7 @@ mod tests {
             "delete_attachment",
             "upload_attachment",
             "export_page",
+            "export_section",
             "export_chapter",
             "export_book",
             "list_comments",
