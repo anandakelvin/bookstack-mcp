@@ -1630,6 +1630,7 @@ fn strip_duplicate_title(content: &str, page_name: &str) -> String {
 
 /// Truncate a description to a reasonable length for the structure tree.
 /// Strips HTML tags, collapses whitespace, and caps at 150 chars.
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 fn truncate_desc(desc: &str) -> String {
     let clean = strip_html_tags(desc);
     // Collapse whitespace and newlines into single spaces
@@ -1908,7 +1909,10 @@ fn replace_section_html(
 
 // --- Dynamic instructions (sent on initialize) ---
 
-async fn build_instructions(client: &BookStackClient, semantic_enabled: bool) -> String {
+// Fork: short rules only. Claude in Chrome keeps only ~4,000 chars of the
+// instructions, so the content tree is gone (briefing + the start page find
+// pages) and per-tool details live in the tool descriptions.
+async fn build_instructions(_client: &BookStackClient, _semantic_enabled: bool) -> String {
     let instance_name = env::var("BSMCP_INSTANCE_NAME").unwrap_or_default();
     let instance_desc = env::var("BSMCP_INSTANCE_DESC").unwrap_or_default();
 
@@ -1923,70 +1927,31 @@ async fn build_instructions(client: &BookStackClient, semantic_enabled: bool) ->
     }
 
     instructions.push_str(
-        "BookStack knowledge base: Shelves > Books > Chapters > Pages. IDs are in the structure below.\n\n\
-         Rules:\n\
-         - Read pages with export_page (format markdown): the text once. get_page returns it three \
-         times (markdown, html, raw_html); use it only when you need the html or metadata.\n\
-         - Before creating or rewriting a page, read one page from the same book or chapter with \
-         export_page and match its style (headings, formatting, markdown patterns).\n\
-         - Put content where the shelf/book/chapter description says it belongs. If the user asks \
-         for a place that does not fit, say so and suggest the right one. Unsure: get_shelf, \
-         get_book or get_chapter show the descriptions.\n\
-         - create_shelf, create_book and create_chapter need a real 1-2 sentence description: what \
-         lives here and what it is for. No placeholders ('TODO', 'n/a'); the server rejects them. \
-         Unsure what a container is for: ask the user. A missing or weak description on update: \
-         offer to improve it.\n\
-         - Send content as 'markdown' (converted to HTML server-side); use 'html' only for exact HTML.\n\
-         - BookStack shows the page name as the title. Do not start the body with it as a heading; \
-         start with text or ##.\n\
-         - Partial edits: edit_page, replace_section, append_to_page, insert_after. They work on \
-         markdown and WYSIWYG pages and need no read first; pass markdown. update_page rewrites \
-         the whole page.\n\
-         - edit_page old_text must match the native format: markdown for 'markdown' pages, html \
-         for 'wysiwyg' pages. The editor type is in every page write response (and in get_page).\n\
-         - Local files: prepare_upload, then `curl -X POST -F 'file=@/path/to/file' <upload_url>` \
-         (no auth), then upload_image or upload_attachment with the staging_id. Public URL: pass \
-         url to upload_image or upload_attachment directly.\n\n",
+        "BookStack knowledge base. Rules for every call:\n\
+         1. Read with briefing(task) at the start, then export_page (format markdown) or \
+         export_section. Never get_page: it returns each page three times.\n\
+         2. Edit with append_to_page, insert_after, replace_section, append_table_row or edit_page. \
+         No read needed first. update_page only for a full rewrite.\n\
+         3. No H1 page title in page content: BookStack shows the name as the title. Start with \
+         text or ##.\n\
+         4. New shelves, books and chapters need a real 1-2 sentence description: what lives \
+         here and what it is for. No placeholders.\n",
     );
 
-    // Include BookStack URL so AI can construct clickable links for users.
-    // Uses BSMCP_BOOKSTACK_URL (the actual BookStack instance), NOT BSMCP_PUBLIC_DOMAIN
-    // (which is the MCP server's own domain for OAuth).
     if let Ok(url) = env::var("BSMCP_BOOKSTACK_URL") {
         let public_url = url.trim().trim_end_matches('/').to_string();
         if !public_url.is_empty() {
             instructions.push_str(&format!(
-                "After creating or updating a page, give the user its link. URLs (slugs are in API \
-                 responses): page {public_url}/books/{{book_slug}}/page/{{slug}}, book \
-                 {public_url}/books/{{slug}}, chapter {public_url}/books/{{book_slug}}/chapter/{{slug}}, \
-                 shelf {public_url}/shelves/{{slug}}\n\n"
+                "5. Page URL: {public_url}/books/{{book_slug}}/page/{{page_slug}} (slugs are in \
+                 write responses). Give the user the link after a write.\n"
             ));
         }
-    }
-
-    match build_structure(client).await {
-        Some(structure) => {
-            instructions.push_str("Current structure:\n\n");
-            instructions.push_str(&structure);
-        }
-        None => {
-            instructions.push_str("Use list_shelves and list_books to explore the structure.");
-        }
-    }
-
-    if semantic_enabled {
-        instructions.push_str(
-            "\n\nSearch: semantic_search with `mode: \"precision\"` first. Use search_content for \
-             exact keywords or tags, or when semantic_search finds nothing. reembed re-indexes after \
-             bulk changes; embedding_status shows progress.",
-        );
-    } else {
-        instructions.push_str("\n\nSearch: search_content (keywords, tags, operators).");
     }
 
     instructions
 }
 
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 const DEFAULT_STRUCTURE_CACHE_TTL_SECS: u64 = 60;
 
 /// Rendered `build_structure` output, keyed by BookStack instance + API token
@@ -2003,11 +1968,13 @@ const DEFAULT_STRUCTURE_CACHE_TTL_SECS: u64 = 60;
 /// The key MUST carry the token id. Shelf visibility is per-token, so a
 /// globally-keyed cache would serve one caller's structure to another —
 /// trading a load bug for a permissions bug.
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 static STRUCTURE_CACHE: OnceLock<Mutex<HashMap<String, (Instant, String)>>> = OnceLock::new();
 
 /// `BSMCP_STRUCTURE_CACHE_TTL_SECS`, default 60. Zero disables caching, so an
 /// operator who needs the structure blurb to reflect a write immediately has a
 /// lever without a redeploy.
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 fn structure_cache_ttl() -> Duration {
     let secs = env::var("BSMCP_STRUCTURE_CACHE_TTL_SECS")
         .ok()
@@ -2017,10 +1984,12 @@ fn structure_cache_ttl() -> Duration {
 }
 
 /// Instance + token. See [`STRUCTURE_CACHE`] on why the token id is load-bearing.
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 fn structure_cache_key(base_url: &str, token_id: &str) -> String {
     format!("{base_url}|{token_id}")
 }
 
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 fn cached_structure(key: &str, ttl: Duration) -> Option<String> {
     if ttl.is_zero() {
         return None;
@@ -2033,6 +2002,7 @@ fn cached_structure(key: &str, ttl: Duration) -> Option<String> {
 /// One rendered sweep. `complete` is false when any `get_shelf` or the
 /// `list_chapters` call failed, meaning the text is missing shelves or
 /// chapters even though it rendered fine.
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 struct StructureSweep {
     text: String,
     complete: bool,
@@ -2046,6 +2016,7 @@ struct StructureSweep {
 /// mid-sweep is precisely the saturated-pool condition this cache exists to
 /// relieve, so the blip and the caching would compound. Before caching
 /// existed this self-healed on the next connect; keep that property.
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 fn store_sweep(key: &str, sweep: &StructureSweep, ttl: Duration) {
     if !sweep.complete {
         tracing::warn!("structure_sweep_incomplete_not_cached");
@@ -2054,6 +2025,7 @@ fn store_sweep(key: &str, sweep: &StructureSweep, ttl: Duration) {
     store_structure(key, &sweep.text, ttl);
 }
 
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 fn store_structure(key: &str, structure: &str, ttl: Duration) {
     if ttl.is_zero() {
         return;
@@ -2067,6 +2039,7 @@ fn store_structure(key: &str, structure: &str, ttl: Duration) {
     guard.insert(key.to_string(), (Instant::now(), structure.to_string()));
 }
 
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 async fn build_structure(client: &BookStackClient) -> Option<String> {
     let ttl = structure_cache_ttl();
     let key = structure_cache_key(client.base_url(), client.token_id());
@@ -2081,6 +2054,7 @@ async fn build_structure(client: &BookStackClient) -> Option<String> {
     Some(sweep.text)
 }
 
+#[allow(dead_code)] // fork: content tree no longer sent in instructions
 async fn build_structure_uncached(client: &BookStackClient) -> Option<StructureSweep> {
     let shelves = client.list_shelves(500, 0).await.ok()?;
     let shelf_list = shelves["data"].as_array()?;
@@ -2283,7 +2257,7 @@ pub fn tool_definitions(semantic_enabled: bool) -> Vec<Value> {
         tool("list_pages", "List all pages across all books.", paginated_schema()),
         tool("get_page", "Get a page by ID with full content and metadata. Returns the content three times (`markdown`, `html`, `raw_html`), so to just read a page use export_page (format markdown) instead. Response carries `editor` ('markdown'|'wysiwyg'), `markdown` source (empty for WYSIWYG pages), and rendered `html`.",
             id_schema("page_id")),
-        tool("create_page", "Create a new page. Must provide either book_id or chapter_id. Pass content via `markdown` (creates a markdown-editor page) or `html` (creates a WYSIWYG page).", json!({
+        tool("create_page", "Create a new page. Must provide either book_id or chapter_id. Pass content via `markdown` (creates a markdown-editor page) or `html` (creates a WYSIWYG page). Put it where the book or chapter description says it belongs; if the user asks for a place that does not fit, say so and suggest the right one. Match the style of a nearby page (read one with export_page).", json!({
             "type": "object",
             "properties": {
                 "name": { "type": "string", "description": "Page name" },
@@ -2732,6 +2706,18 @@ fn update_schema(id_name: &str, fields: &[&str]) -> Value {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    /// Fork: Claude in Chrome keeps only ~4,000 chars of the instructions.
+    /// Target is < 1,500 with the URL line (~150 chars), so < 1,350 without.
+    #[tokio::test]
+    async fn instructions_stay_short() {
+        let client = BookStackClient::new("https://kb.example.com", "id", "secret", reqwest::Client::new());
+        let text = build_instructions(&client, true).await;
+        println!("{text}\n[{} chars without URL line]", text.chars().count());
+        assert!(text.chars().count() < 1350);
+        assert!(!text.contains("Current structure"));
+        assert!(text.contains("export_page") && text.contains("Never get_page"));
+    }
 
     // --- Structure cache (initialize fan-out, issue #143) ---
     //
