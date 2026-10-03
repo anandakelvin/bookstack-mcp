@@ -627,6 +627,27 @@ async fn execute_tool(
                 client.base_url(),
             ))
         }
+        // Fork: add a row to the first table under a heading, no read needed.
+        "append_table_row" => {
+            let id = arg_i64_required(args, "page_id")?;
+            let heading = arg_str(args, "heading")?;
+            let cells: Vec<String> = args
+                .get("cells")
+                .and_then(|v| v.as_array())
+                .ok_or("cells is required (array of strings)")?
+                .iter()
+                .map(|c| c.as_str().map(String::from).unwrap_or_else(|| c.to_string()))
+                .collect();
+            let (editor, existing) = get_page_content(client, id).await?;
+            if editor != "markdown" {
+                return Err(format!(
+                    "append_table_row works on markdown-editor pages only; page {id} uses '{editor}'. Use replace_section instead."
+                ));
+            }
+            let updated = crate::fork_tools::append_table_row(&existing, &heading, &cells, id)?;
+            let result = client.update_page(id, &json!({ "markdown": updated })).await?;
+            Ok(format_page_success("Table row added.", &result, client.base_url()))
+        }
         "insert_after" => {
             let id = arg_i64_required(args, "page_id")?;
             let after = args
@@ -2312,6 +2333,15 @@ pub fn tool_definitions(semantic_enabled: bool) -> Vec<Value> {
             },
             "required": ["page_id", "heading", "markdown"]
         })),
+        tool("append_table_row", "Add one row at the end of the first table under a heading. No need to read the page first. Markdown-editor pages only. The number of cells must match the table's columns.", json!({
+            "type": "object",
+            "properties": {
+                "page_id": { "type": "integer", "description": "The page_id" },
+                "heading": { "type": "string", "description": "The heading the table is under (e.g. '## Log' or just 'Log'), case-insensitive" },
+                "cells": { "type": "array", "items": { "type": "string" }, "description": "Cell texts, left to right" }
+            },
+            "required": ["page_id", "heading", "cells"]
+        })),
         tool("insert_after", "Insert markdown content after a specific line in a page. Anchor matches exact line content (trimmed). Works on markdown and WYSIWYG pages. No need to read the page first.", json!({
             "type": "object",
             "properties": {
@@ -2796,7 +2826,7 @@ mod tests {
     /// v0.10.0 surface lock + issue #69: 59 BookStack CRUD plus 1 directory
     /// tool plus 3 semantic tools equals 63, plus the fork's tools
     /// (FORK_TOOLS). Anything else means a surface leaked in.
-    const FORK_TOOLS: usize = 2;
+    const FORK_TOOLS: usize = 3;
 
     #[test]
     fn tools_list_count_with_semantic() {
@@ -2862,6 +2892,7 @@ mod tests {
             "export_page",
             "export_section",
             "briefing",
+            "append_table_row",
             "export_chapter",
             "export_book",
             "list_comments",

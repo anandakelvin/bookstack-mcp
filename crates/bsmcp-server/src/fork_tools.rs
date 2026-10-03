@@ -233,6 +233,59 @@ pub fn compact_search(payload: &serde_json::Value) -> serde_json::Value {
     out
 }
 
+// --- append_table_row ---
+
+fn table_cells(line: &str) -> Vec<String> {
+    line.trim()
+        .trim_start_matches('|')
+        .trim_end_matches('|')
+        .split('|')
+        .map(|c| c.trim().to_string())
+        .collect()
+}
+
+/// Add one row at the end of the first table under `heading` in markdown
+/// source. Cells must match the table's column count. `|` in a cell is
+/// escaped and newlines become spaces.
+pub fn append_table_row(md: &str, heading: &str, cells: &[String], page_id: i64) -> Result<String, String> {
+    let lines: Vec<&str> = md.lines().collect();
+    let (start, end) = section_range(&lines, heading).ok_or_else(|| {
+        format!("Heading '{heading}' not found in page {page_id}. Headings: {}", heading_list(md))
+    })?;
+    let is_row = |l: &str| l.trim_start().starts_with('|');
+    let first = (start + 1..end)
+        .find(|i| is_row(lines[*i]))
+        .ok_or_else(|| format!("No table under heading '{heading}' in page {page_id}"))?;
+    let mut last = first;
+    while last + 1 < end && is_row(lines[last + 1]) {
+        last += 1;
+    }
+    let header = table_cells(lines[first]);
+    if cells.len() != header.len() {
+        return Err(format!(
+            "The table has {} columns ({}), got {} cells",
+            header.len(),
+            header.join(" | "),
+            cells.len()
+        ));
+    }
+    let row = format!(
+        "| {} |",
+        cells
+            .iter()
+            .map(|c| c.replace('|', "\\|").replace(['\r', '\n'], " "))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    out.insert(last + 1, row);
+    let mut joined = out.join("\n");
+    if md.ends_with('\n') {
+        joined.push('\n');
+    }
+    Ok(joined)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +375,24 @@ mod tests {
         assert_eq!(c["unknown_scopes"], serde_json::json!(["typo"]));
         assert!(c.get("stats").is_none());
         assert!(serde_json::to_string(&c).unwrap().len() < serde_json::to_string_pretty(&full).unwrap().len());
+    }
+
+    #[test]
+    fn append_row_after_last_row_of_first_table() {
+        let md = "## Log\n\nText\n\n| Date | What |\n|---|---|\n| 1 Oct | a |\n\nAfter\n\n| x |\n|---|\n\n## Next\n| n |\n";
+        let cells = vec!["3 Oct".to_string(), "b | c".to_string()];
+        let out = append_table_row(md, "Log", &cells, 1).unwrap();
+        assert!(out.contains("| 1 Oct | a |\n| 3 Oct | b \\| c |\n\nAfter"));
+        assert!(out.ends_with("| n |\n"));
+    }
+
+    #[test]
+    fn append_row_errors() {
+        let md = "## Log\n\n| Date | What |\n|---|---|\n\n## Empty\n\ntext\n";
+        let e = append_table_row(md, "Log", &["only one".to_string()], 1).unwrap_err();
+        assert!(e.contains("2 columns (Date | What)"));
+        assert!(append_table_row(md, "Empty", &["a".to_string()], 1).unwrap_err().contains("No table"));
+        assert!(append_table_row(md, "Missing", &["a".to_string()], 1).unwrap_err().contains("Headings:"));
     }
 
     #[test]
