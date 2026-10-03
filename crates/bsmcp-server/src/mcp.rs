@@ -838,6 +838,12 @@ async fn execute_tool(
             let md = client.export_page(id, ExportFormat::Markdown).await?;
             crate::fork_tools::export_section(&md, &heading, id)
         }
+        // Fork: start page + the task row's "Read first" pages in one call.
+        "briefing" => {
+            let task = arg_str(args, "task")?;
+            let start_id = crate::fork_tools::briefing_page_id()?;
+            crate::fork_tools::briefing(client, start_id, &task).await
+        }
         "export_chapter" => {
             let id = arg_i64_required(args, "chapter_id")?;
             let fmt = ExportFormat::parse_str(&arg_str_default(args, "format", "markdown"))?;
@@ -2390,6 +2396,13 @@ pub fn tool_definitions(semantic_enabled: bool) -> Vec<Value> {
             },
             "required": ["page_id", "heading"]
         })),
+        tool("briefing", "Start a session in one call: returns the start page plus every page in the \"Read first\" column of the start page's task-table row that matches the task (keyword match, all words, case-insensitive). Each page once, as markdown. No match: the start page plus the list of tasks.", json!({
+            "type": "object",
+            "properties": {
+                "task": { "type": "string", "description": "Words from the task name, e.g. 'cover letter', 'interview prep', 'english'" }
+            },
+            "required": ["task"]
+        })),
         tool("export_chapter", "Export a chapter as markdown, plaintext, or html. Returns all pages in the chapter.", json!({
             "type": "object",
             "properties": {
@@ -2777,7 +2790,7 @@ mod tests {
     /// v0.10.0 surface lock + issue #69: 59 BookStack CRUD plus 1 directory
     /// tool plus 3 semantic tools equals 63, plus the fork's tools
     /// (FORK_TOOLS). Anything else means a surface leaked in.
-    const FORK_TOOLS: usize = 1;
+    const FORK_TOOLS: usize = 2;
 
     #[test]
     fn tools_list_count_with_semantic() {
@@ -2842,6 +2855,7 @@ mod tests {
             "upload_attachment",
             "export_page",
             "export_section",
+            "briefing",
             "export_chapter",
             "export_book",
             "list_comments",

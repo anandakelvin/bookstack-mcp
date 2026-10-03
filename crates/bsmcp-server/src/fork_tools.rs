@@ -81,6 +81,123 @@ pub fn export_section(md: &str, heading: &str, page_id: i64) -> Result<String, S
     }
 }
 
+// --- briefing(task) ---
+
+/// Rows of the first markdown table that has a "Task" and a "Read first"
+/// column: (task cell, read-first cell).
+pub fn task_table(md: &str) -> Vec<(String, String)> {
+    let split = |line: &str| -> Vec<String> {
+        line.trim()
+            .trim_start_matches('|')
+            .trim_end_matches('|')
+            .split('|')
+            .map(|c| c.trim().to_string())
+            .collect()
+    };
+    let lines: Vec<&str> = md.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim_start().starts_with('|') {
+            let header = split(lines[i]);
+            let col = |name: &str| header.iter().position(|h| h.eq_ignore_ascii_case(name));
+            let mut j = i + 1;
+            if let (Some(task_col), Some(read_col)) = (col("Task"), col("Read first")) {
+                let mut rows = Vec::new();
+                while j < lines.len() && lines[j].trim_start().starts_with('|') {
+                    let cells = split(lines[j]);
+                    let is_separator = cells.iter().all(|c| c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')));
+                    if !is_separator {
+                        if let (Some(t), Some(r)) = (cells.get(task_col), cells.get(read_col)) {
+                            rows.push((t.clone(), r.clone()));
+                        }
+                    }
+                    j += 1;
+                }
+                return rows;
+            }
+            while j < lines.len() && lines[j].trim_start().starts_with('|') {
+                j += 1;
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    Vec::new()
+}
+
+/// First row whose task cell contains every word of `task` (case-insensitive).
+pub fn match_task<'a>(rows: &'a [(String, String)], task: &str) -> Option<&'a (String, String)> {
+    let words: Vec<String> = task.split_whitespace().map(|w| w.to_lowercase()).collect();
+    if words.is_empty() {
+        return None;
+    }
+    rows.iter().find(|(t, _)| {
+        let t = t.to_lowercase();
+        words.iter().all(|w| t.contains(w.as_str()))
+    })
+}
+
+/// Page ids written in brackets, e.g. "Resume facts (49)" -> 49. In order, no duplicates.
+pub fn bracket_ids(cell: &str) -> Vec<i64> {
+    let mut ids = Vec::new();
+    let mut rest = cell;
+    while let Some(open) = rest.find('(') {
+        rest = &rest[open + 1..];
+        if let Some(close) = rest.find(')') {
+            if let Ok(id) = rest[..close].trim().parse::<i64>() {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    ids
+}
+
+pub fn briefing_page_id() -> Result<i64, String> {
+    std::env::var("BSMCP_BRIEFING_PAGE_ID")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .ok_or_else(|| "briefing is not configured: set BSMCP_BRIEFING_PAGE_ID to the start page id".to_string())
+}
+
+/// The start page plus the "Read first" pages of the matching task row, each
+/// once, as markdown with a small header per page.
+pub async fn briefing(
+    client: &bsmcp_common::bookstack::BookStackClient,
+    start_id: i64,
+    task: &str,
+) -> Result<String, String> {
+    use bsmcp_common::bookstack::ExportFormat;
+    let start = client.export_page(start_id, ExportFormat::Markdown).await?;
+    let rows = task_table(&start);
+    let mut out = format!("=== page {start_id} (start page) ===\n{}\n", start.trim_end());
+
+    let Some((task_cell, read_cell)) = match_task(&rows, task) else {
+        let names: Vec<&str> = rows.iter().map(|(t, _)| t.as_str()).collect();
+        out.push_str(&format!(
+            "\n=== no task row matched '{task}' ===\nTasks: {}\n",
+            names.join(" | ")
+        ));
+        return Ok(out);
+    };
+
+    let ids: Vec<i64> = bracket_ids(read_cell).into_iter().filter(|id| *id != start_id).collect();
+    let pages = futures::future::join_all(
+        ids.iter().map(|id| client.export_page(*id, ExportFormat::Markdown)),
+    )
+    .await;
+    out.push_str(&format!("\n=== task: {task_cell} | read first: {ids:?} ===\n"));
+    for (id, page) in ids.iter().zip(pages) {
+        match page {
+            Ok(md) => out.push_str(&format!("\n=== page {id} ===\n{}\n", md.trim_end())),
+            Err(e) => out.push_str(&format!("\n=== page {id}: error: {e} ===\n")),
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +237,38 @@ mod tests {
         let e = export_section(PAGE, "Nope", 44).unwrap_err();
         assert!(e.contains("## Always"));
         assert!(e.contains("page 44"));
+    }
+
+    const START: &str = "# Start here\n\n## Task table\n\n| Task | Read first | Write back |\n|---|---|---|\n| Cover letter, application answers or email for a job | [Application rules](https://x/page/a) (116) · [About me](https://x/b) (46) · [Resume facts](https://x/c) (49). Follow the steps in 116 | 118 |\n| Interview prep | Overview (48) · About me (46) | 48 |\n| Anything else | nothing more | ask |\n";
+
+    #[test]
+    fn task_table_rows() {
+        let rows = task_table(START);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[1].0, "Interview prep");
+    }
+
+    #[test]
+    fn keyword_match_all_words_any_case() {
+        let rows = task_table(START);
+        assert_eq!(match_task(&rows, "cover letter").unwrap().0.split(',').next(), Some("Cover letter"));
+        assert_eq!(match_task(&rows, "INTERVIEW").unwrap().0, "Interview prep");
+        assert!(match_task(&rows, "letter interview").is_none());
+        assert!(match_task(&rows, "  ").is_none());
+    }
+
+    #[test]
+    fn ids_only_from_brackets_in_order() {
+        let rows = task_table(START);
+        let row = match_task(&rows, "cover letter").unwrap();
+        assert_eq!(bracket_ids(&row.1), vec![116, 46, 49]);
+        assert_eq!(bracket_ids("a (1) b (x) c (1) (https://x) (2)"), vec![1, 2]);
+    }
+
+    #[test]
+    fn table_without_columns_is_skipped() {
+        let md = "| a | b |\n|---|---|\n| 1 | 2 |\n\n| Task | Read first |\n|--|--|\n| T | (5) |\n";
+        assert_eq!(task_table(md), vec![("T".to_string(), "(5)".to_string())]);
     }
 
     #[test]
