@@ -1884,71 +1884,30 @@ async fn build_instructions(client: &BookStackClient, semantic_enabled: bool) ->
     }
 
     instructions.push_str(
-        "BookStack knowledge management server. Content is organized as: \
-         Shelves > Books > Chapters > Pages. ",
-    );
-
-    if semantic_enabled {
-        instructions.push_str(
-            "Use search_content to find content by keyword or tag, \
-             or navigate the hierarchy using the IDs below.\n\n",
-        );
-    } else {
-        instructions.push_str(
-            "Use search_content to find content, \
-             or navigate the hierarchy using the IDs below.\n\n",
-        );
-    }
-
-    instructions.push_str(
-        "IMPORTANT: Before creating or updating any page, first retrieve an existing page \
-         from the same book or chapter using export_page (format markdown) to identify the writing style, \
-         formatting conventions, heading structure, and markdown patterns already in use. \
-         Match the established style of the surrounding content.\n\n\
-         IMPORTANT: Validate content placement before creating pages. Each shelf, book, and \
-         chapter has a specific purpose described in the structure below. Do NOT place content \
-         where it doesn't belong — for example, do not mix SOPs with design documents, general \
-         reference knowledge with company-specific knowledge, or personal content with work \
-         content. If the user asks to create content in a location that doesn't match the \
-         target's purpose, push back and suggest the correct location. When unsure, check the \
-         shelf/book/chapter descriptions using get_shelf, get_book, or get_chapter.\n\n\
-         IMPORTANT: Descriptions on shelves, books, and chapters are REQUIRED, not optional. \
-         When you call create_shelf, create_book, or create_chapter, you MUST provide a \
-         meaningful 1-2 sentence description. Descriptions are surfaced to every Claude \
-         client that connects to this BookStack — they literally shape how future content \
-         gets routed. A good description answers: (1) what kind of content lives here, and \
-         (2) what is this container for (so a future AI can decide whether new content \
-         belongs here vs elsewhere). Do NOT use placeholders like 'TODO', 'description', or \
-         'n/a' — the server will reject them. If you don't yet know what the container is \
-         for, ask the user before creating it. When you update existing shelves/books/chapters \
-         via update_shelf, update_book, or update_chapter and notice the description is \
-         missing or weak, offer to improve it.\n\n\
-         Markdown content is automatically converted to HTML server-side. \
-         You can send markdown via the 'markdown' parameter for pages and comments — \
-         the server handles conversion reliably, avoiding JSON escaping issues with \
-         complex markdown. Use 'html' only when you need precise HTML control.\n\n\
-         IMPORTANT: BookStack automatically displays the page name as an H1 title at the top \
-         of every page. Do NOT include the page title as a heading (e.g. '# Page Name') in \
-         the markdown/html content — this causes a duplicate title. Start content directly with \
-         body text or a sub-heading (## or lower).\n\n\
-         All editing tools (edit_page, replace_section, append_to_page, insert_after) work on \
-         ALL pages regardless of editor type (markdown or WYSIWYG). They use BookStack's \
-         markdown export API which converts HTML content to markdown automatically. Prefer \
-         these targeted tools over update_page for partial edits — update_page rewrites the \
-         entire page and should only be used when the whole page needs replacing.\n\n\
-         IMPORTANT: Pages have an 'editor' field ('markdown' or 'wysiwyg'). \
-         For edit_page, old_text/new_text must match the page's native format: \
-         the 'markdown' field for markdown pages, the 'html' field for WYSIWYG pages. \
-         The editor type is in every page write response (and in get_page). \
-         For append_to_page, replace_section, and insert_after, always pass markdown content — \
-         it is automatically converted to HTML for WYSIWYG pages.\n\n\
-         To upload images or file attachments from local files, use the staging upload flow: \
-         (1) call prepare_upload to get a staging_id and upload_url, \
-         (2) POST the file to the upload_url using curl: \
-         `curl -X POST -F 'file=@/path/to/file' <upload_url>` (no auth header needed), \
-         (3) call upload_image or upload_attachment with the staging_id. \
-         Alternatively, if the file is at a public URL, pass the url parameter directly \
-         to upload_image or upload_attachment without staging.\n\n",
+        "BookStack knowledge base: Shelves > Books > Chapters > Pages. IDs are in the structure below.\n\n\
+         Rules:\n\
+         - Read pages with export_page (format markdown): the text once. get_page returns it three \
+         times (markdown, html, raw_html); use it only when you need the html or metadata.\n\
+         - Before creating or rewriting a page, read one page from the same book or chapter with \
+         export_page and match its style (headings, formatting, markdown patterns).\n\
+         - Put content where the shelf/book/chapter description says it belongs. If the user asks \
+         for a place that does not fit, say so and suggest the right one. Unsure: get_shelf, \
+         get_book or get_chapter show the descriptions.\n\
+         - create_shelf, create_book and create_chapter need a real 1-2 sentence description: what \
+         lives here and what it is for. No placeholders ('TODO', 'n/a'); the server rejects them. \
+         Unsure what a container is for: ask the user. A missing or weak description on update: \
+         offer to improve it.\n\
+         - Send content as 'markdown' (converted to HTML server-side); use 'html' only for exact HTML.\n\
+         - BookStack shows the page name as the title. Do not start the body with it as a heading; \
+         start with text or ##.\n\
+         - Partial edits: edit_page, replace_section, append_to_page, insert_after. They work on \
+         markdown and WYSIWYG pages and need no read first; pass markdown. update_page rewrites \
+         the whole page.\n\
+         - edit_page old_text must match the native format: markdown for 'markdown' pages, html \
+         for 'wysiwyg' pages. The editor type is in every page write response (and in get_page).\n\
+         - Local files: prepare_upload, then `curl -X POST -F 'file=@/path/to/file' <upload_url>` \
+         (no auth), then upload_image or upload_attachment with the staging_id. Public URL: pass \
+         url to upload_image or upload_attachment directly.\n\n",
     );
 
     // Include BookStack URL so AI can construct clickable links for users.
@@ -1958,13 +1917,10 @@ async fn build_instructions(client: &BookStackClient, semantic_enabled: bool) ->
         let public_url = url.trim().trim_end_matches('/').to_string();
         if !public_url.is_empty() {
             instructions.push_str(&format!(
-                "BookStack URL: {public_url}\n\
-                 When you create or update a page, present a clickable link to the user so they can \
-                 review it. Page URLs follow the pattern: {public_url}/books/{{book_slug}}/page/{{page_slug}}\n\
-                 The slug is returned in the API response. For other content types:\n\
-                 - Books: {public_url}/books/{{slug}}\n\
-                 - Chapters: {public_url}/books/{{book_slug}}/chapter/{{slug}}\n\
-                 - Shelves: {public_url}/shelves/{{slug}}\n\n"
+                "After creating or updating a page, give the user its link. URLs (slugs are in API \
+                 responses): page {public_url}/books/{{book_slug}}/page/{{slug}}, book \
+                 {public_url}/books/{{slug}}, chapter {public_url}/books/{{book_slug}}/chapter/{{slug}}, \
+                 shelf {public_url}/shelves/{{slug}}\n\n"
             ));
         }
     }
@@ -1981,15 +1937,12 @@ async fn build_instructions(client: &BookStackClient, semantic_enabled: bool) ->
 
     if semantic_enabled {
         instructions.push_str(
-            "\n\nSemantic vector search is available and should be your PRIMARY search method. \
-             Prefer `semantic_search` with `mode: \"precision\"` over `search_content` for most queries — \
-             precision picks the most-relevant page ~1s faster and more accurately than keyword search \
-             or the standard mode. Drop to `mode: \"standard\"` only when you need a broader sweep \
-             (more results, blanket-adjacent pages via Markov-blanket boost). Fall back to \
-             `search_content` only for exact keyword/tag matches or when semantic_search returns \
-             nothing. Use `reembed` to re-index after bulk changes and `embedding_status` to check \
-             progress.",
+            "\n\nSearch: semantic_search with `mode: \"precision\"` first. Use search_content for \
+             exact keywords or tags, or when semantic_search finds nothing. reembed re-indexes after \
+             bulk changes; embedding_status shows progress.",
         );
+    } else {
+        instructions.push_str("\n\nSearch: search_content (keywords, tags, operators).");
     }
 
     instructions
@@ -2153,15 +2106,11 @@ async fn build_structure_uncached(client: &BookStackClient) -> Option<StructureS
                     output.push_str(&format!("  Book: {bname} (ID: {bid}) — {bdesc}\n"));
                 }
 
+                // Fork: chapter names + ids only (descriptions via get_chapter),
+                // to keep the per-session instructions small.
                 if let Some(chs) = chapters_by_book.get(&bid) {
-                    for (cid, cname, cdesc) in chs {
-                        let cdesc = truncate_desc(cdesc);
-                        if cdesc.is_empty() {
-                            output.push_str(&format!("    Chapter: {cname} (ID: {cid})\n"));
-                        } else {
-                            output
-                                .push_str(&format!("    Chapter: {cname} (ID: {cid}) — {cdesc}\n"));
-                        }
+                    for (cid, cname, _cdesc) in chs {
+                        output.push_str(&format!("    Chapter: {cname} (ID: {cid})\n"));
                     }
                 }
             }
