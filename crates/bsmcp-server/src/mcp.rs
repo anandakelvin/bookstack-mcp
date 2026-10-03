@@ -239,6 +239,11 @@ async fn execute_tool(
                 }
             }
             trim_semantic_search_payload(&mut result);
+            // Fork: compact by default (owner's choice); `compact: false` = full output.
+            if args.get("compact").and_then(|v| v.as_bool()).unwrap_or(true) {
+                return serde_json::to_string(&crate::fork_tools::compact_search(&result))
+                    .map_err(|e| e.to_string());
+            }
             format_json(&result)
         }
         "reembed" => {
@@ -2578,6 +2583,7 @@ pub fn tool_definitions(semantic_enabled: bool) -> Vec<Value> {
                     "limit": { "type": "integer", "description": "Max number of page results to return (capped at 100). Issue #80 raised the cap from 50 to 100 for precision-mode cascade callers.", "default": 10 },
                     "threshold": { "type": "number", "description": "Minimum cosine similarity score (0.0-1.0). Default: 0.45 for hybrid, 0.50 for pure vector.", "default": 0.45 },
                     "hybrid": { "type": "boolean", "description": "Combine vector + keyword search (default true). Set false for pure vector. Ignored in `precision` mode (cascade has its own keyword stage).", "default": true },
+                    "compact": { "type": "boolean", "description": "Default true: only page_id, page_name and chunks (heading_path, content), minified JSON. Set false for the full output with scores, scoring breakdown and stats (needed for `verbose`).", "default": true },
                     "verbose": { "type": "boolean", "description": "Include full Markov blanket data in results. Default false returns slim results (scores, chunks, scoring breakdown). Set true for full graph context.", "default": false },
                     "mode": {
                         "type": "string",

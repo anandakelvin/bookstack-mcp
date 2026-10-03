@@ -198,6 +198,41 @@ pub async fn briefing(
     Ok(out)
 }
 
+// --- compact semantic_search ---
+
+const COMPACT_SEARCH_HINT: &str =
+    "Previews only (chunks of ~200 chars; … = cut). Read a page with export_page (format markdown) or one part with export_section.";
+
+/// Keep page_id, page_name and each chunk's heading_path + content. Drops
+/// scores, scoring breakdown, stats and dates. `stats.unknown_scopes`, if
+/// any, moves to the top level so a typo in a scope name still shows.
+pub fn compact_search(payload: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{json, Value};
+    let results: Vec<Value> = payload["results"]
+        .as_array()
+        .map(|rs| {
+            rs.iter()
+                .map(|r| {
+                    let chunks: Vec<Value> = r["chunks"]
+                        .as_array()
+                        .map(|cs| {
+                            cs.iter()
+                                .map(|c| json!({ "heading_path": c["heading_path"], "content": c["content"] }))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    json!({ "page_id": r["page_id"], "page_name": r["page_name"], "chunks": chunks })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = json!({ "hint": COMPACT_SEARCH_HINT, "results": results });
+    if let Some(unknown) = payload["stats"].get("unknown_scopes") {
+        out["unknown_scopes"] = unknown.clone();
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +304,24 @@ mod tests {
     fn table_without_columns_is_skipped() {
         let md = "| a | b |\n|---|---|\n| 1 | 2 |\n\n| Task | Read first |\n|--|--|\n| T | (5) |\n";
         assert_eq!(task_table(md), vec![("T".to_string(), "(5)".to_string())]);
+    }
+
+    #[test]
+    fn compact_search_keeps_only_text_fields() {
+        let full = serde_json::json!({
+            "hint": "long hint",
+            "results": [{
+                "book_id": 36, "page_id": 113, "page_name": "Token cost", "score": -1.3,
+                "scoring": {"vector": 0.6}, "updated_at": "x",
+                "chunks": [{"content": "abc…", "heading_path": "H", "score": 0.6, "truncated": true}]
+            }],
+            "stats": {"total_chunks": 324, "unknown_scopes": ["typo"]}
+        });
+        let c = compact_search(&full);
+        assert_eq!(c["results"][0], serde_json::json!({"page_id": 113, "page_name": "Token cost", "chunks": [{"heading_path": "H", "content": "abc…"}]}));
+        assert_eq!(c["unknown_scopes"], serde_json::json!(["typo"]));
+        assert!(c.get("stats").is_none());
+        assert!(serde_json::to_string(&c).unwrap().len() < serde_json::to_string_pretty(&full).unwrap().len());
     }
 
     #[test]
