@@ -547,7 +547,7 @@ async fn execute_tool(
             // Validate old_text exists in native content
             let count = native_content.matches(old_text).count();
             if count == 0 {
-                return Err(format!("old_text not found in page {id}. This page uses the '{editor}' editor — make sure old_text matches the '{}' field from get_page.", if editor == "markdown" { "markdown" } else { "html" }));
+                return Err(format!("old_text not found in page {id}. This page uses the '{editor}' editor — make sure old_text matches the page's {}.", if editor == "markdown" { "markdown (export_page, format markdown)" } else { "html (get_page `html` field)" }));
             }
             if count > 1 && !replace_all {
                 return Err(format!("old_text found {count} times in page {id}. Use replace_all=true to replace all, or provide more context to make it unique."));
@@ -1457,7 +1457,7 @@ const SEMANTIC_SEARCH_CHUNK_LIMIT: usize = 5;
 const SEMANTIC_SEARCH_CHUNK_CHARS: usize = 200;
 const SEMANTIC_SEARCH_HINT: &str =
     "Each result returns up to 5 chunks of ~200 chars (truncated chunks have `truncated: true` and end with …). \
-     These are search-result previews, not full page content — call `get_page(page_id)` to read the full markdown when a match looks relevant.";
+     These are search-result previews, not full page content — call `export_page(page_id)` (format markdown) to read the full page when a match looks relevant.";
 
 fn trim_semantic_search_payload(payload: &mut Value) {
     let Some(obj) = payload.as_object_mut() else {
@@ -1671,7 +1671,7 @@ fn format_page_success(action: &str, result: &Value, base_url: &str) -> String {
     } else {
         format!("\nURL: {url}")
     };
-    format!("{action}\nPage ID: {id}\nBook ID: {book_id}\nName: {name}\nEditor: {editor}\nSlug: {slug}\nRevision: {revision}{url_line}\nUse get_page({id}) to verify content if needed.")
+    format!("{action}\nPage ID: {id}\nBook ID: {book_id}\nName: {name}\nEditor: {editor}\nSlug: {slug}\nRevision: {revision}{url_line}\nUse export_page({id}) (format markdown) to verify content if needed.")
 }
 
 /// Slim success response for shelf create/update operations.
@@ -1902,7 +1902,7 @@ async fn build_instructions(client: &BookStackClient, semantic_enabled: bool) ->
 
     instructions.push_str(
         "IMPORTANT: Before creating or updating any page, first retrieve an existing page \
-         from the same book or chapter using get_page to identify the writing style, \
+         from the same book or chapter using export_page (format markdown) to identify the writing style, \
          formatting conventions, heading structure, and markdown patterns already in use. \
          Match the established style of the surrounding content.\n\n\
          IMPORTANT: Validate content placement before creating pages. Each shelf, book, and \
@@ -1939,7 +1939,7 @@ async fn build_instructions(client: &BookStackClient, semantic_enabled: bool) ->
          IMPORTANT: Pages have an 'editor' field ('markdown' or 'wysiwyg'). \
          For edit_page, old_text/new_text must match the page's native format: \
          the 'markdown' field for markdown pages, the 'html' field for WYSIWYG pages. \
-         Check the editor type via get_page before using edit_page. \
+         The editor type is in every page write response (and in get_page). \
          For append_to_page, replace_section, and insert_after, always pass markdown content — \
          it is automatically converted to HTML for WYSIWYG pages.\n\n\
          To upload images or file attachments from local files, use the staging upload flow: \
@@ -2293,7 +2293,7 @@ pub fn tool_definitions(semantic_enabled: bool) -> Vec<Value> {
 
         // Pages
         tool("list_pages", "List all pages across all books.", paginated_schema()),
-        tool("get_page", "Get a page by ID with full content. Response carries `editor` ('markdown'|'wysiwyg'), `markdown` source (empty for WYSIWYG pages), and rendered `html`.",
+        tool("get_page", "Get a page by ID with full content and metadata. Returns the content three times (`markdown`, `html`, `raw_html`), so to just read a page use export_page (format markdown) instead. Response carries `editor` ('markdown'|'wysiwyg'), `markdown` source (empty for WYSIWYG pages), and rendered `html`.",
             id_schema("page_id")),
         tool("create_page", "Create a new page. Must provide either book_id or chapter_id. Pass content via `markdown` (creates a markdown-editor page) or `html` (creates a WYSIWYG page).", json!({
             "type": "object",
@@ -2318,7 +2318,7 @@ pub fn tool_definitions(semantic_enabled: bool) -> Vec<Value> {
             },
             "required": ["page_id"]
         })),
-        tool("edit_page", "Exact-string replace in a page's native content. old_text/new_text must match the page's native format: `markdown` for markdown-editor pages, `html` for WYSIWYG (check `editor` via get_page). Fails if old_text is not found or is ambiguous (multiple matches without replace_all).", json!({
+        tool("edit_page", "Exact-string replace in a page's native content. old_text/new_text must match the page's native format: `markdown` for markdown-editor pages, `html` for WYSIWYG (`editor` is in every page write response and in get_page; read markdown pages with export_page). Fails if old_text is not found or is ambiguous (multiple matches without replace_all).", json!({
             "type": "object",
             "properties": {
                 "page_id": { "type": "integer", "description": "The page_id" },
@@ -2418,7 +2418,7 @@ pub fn tool_definitions(semantic_enabled: bool) -> Vec<Value> {
         })),
 
         // Exports
-        tool("export_page", "Export a page as markdown, plaintext, or html. Returns the raw exported content.", json!({
+        tool("export_page", "Export a page as markdown, plaintext, or html. Returns the raw exported content. Use format markdown to read a page: the text once, no metadata.", json!({
             "type": "object",
             "properties": {
                 "page_id": { "type": "integer", "description": "Page ID to export" },
