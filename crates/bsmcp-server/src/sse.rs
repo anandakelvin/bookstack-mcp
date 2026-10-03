@@ -562,6 +562,7 @@ pub async fn handle_message(
     };
 
     let semantic = state.semantic.as_ref();
+    let started = Instant::now();
     let response = mcp::handle_request(
         &request,
         &client,
@@ -573,6 +574,7 @@ pub async fn handle_message(
     .await;
 
     if let Some(response) = response {
+        crate::usage_log::record(&session_id, &request, &response, started.elapsed().as_millis());
         let data = serde_json::to_string(&response).unwrap_or_default();
         if let Err(e) = tx.try_send(Ok(Event::default().event("message").data(data))) {
             tracing::warn!(session_id = %session_id, error = %e, "sse_send_failed");
@@ -670,6 +672,7 @@ pub async fn handle_streamable(
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty());
 
+    let started = Instant::now();
     let response = mcp::handle_request(
         &request,
         &client,
@@ -679,13 +682,20 @@ pub async fn handle_streamable(
         &state.timezone,
     )
     .await;
+    let elapsed_ms = started.elapsed().as_millis();
 
     match response {
         Some(resp) => {
+            let new_session_id =
+                (method == "initialize").then(|| uuid::Uuid::new_v4().to_string());
+            let log_session = new_session_id
+                .as_deref()
+                .or(incoming_session_id.as_deref())
+                .unwrap_or("-");
+            crate::usage_log::record(log_session, &request, &resp, elapsed_ms);
             let mut http_resp = Json(resp).into_response();
 
-            if method == "initialize" {
-                let new_session_id = uuid::Uuid::new_v4().to_string();
+            if let Some(new_session_id) = new_session_id {
                 tracing::info!(session_id = %new_session_id, "streamable_session_created");
                 {
                     let mut ss = state.streamable_sessions.write().await;

@@ -5,6 +5,7 @@ mod semantic;
 mod settings_ui;
 mod sse;
 mod staging;
+mod usage_log;
 
 use std::env;
 use std::net::SocketAddr;
